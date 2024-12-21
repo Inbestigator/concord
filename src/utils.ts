@@ -1,5 +1,4 @@
 import { blue, bold, italic, underline } from "@std/fmt/colors";
-import ora from "ora";
 
 export async function callDiscord(
   endpoint: string,
@@ -16,9 +15,7 @@ export async function callDiscord(
   });
   if (!res.ok) {
     const data = await res.json();
-    console.log(res.status);
-    ora(`Failed to ${options.method} ${endpoint}`).fail();
-    console.error(`└ ${data.message}`);
+    console.error(`Failed to ${options.method} ${endpoint}\n└ ${data.message}`);
   }
   return res;
 }
