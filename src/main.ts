@@ -1,21 +1,37 @@
-import { callDiscord, marky } from "./utils.ts";
-import { GuildListItem } from "./types.ts";
+import { marky } from "./utils.ts";
 import type {
   APIGuildMember,
   APIGuildTextChannel,
   APIMessage,
-  ChannelType,
 } from "discord-api-types/v10";
 import { APIOverwrite } from "discord-api-types/v10";
-import { gray } from "@std/fmt/colors";
+import { bgBlue, bgBrightBlack, gray, rgb24 } from "@std/fmt/colors";
 import select from "../src/select.ts";
 import * as tty from "@denosaurs/tty";
 import "@std/dotenv/load";
+import { getColour, userCache } from "./cache.ts";
+import {
+  createMessage,
+  getMember,
+  listChannels,
+  listGuilds,
+  listMessages,
+} from "@dressed/dressed";
 
-if (!Deno.env.has("TOKEN")) {
-  alert("You must provide a TOKEN environment variable in a .env file");
+if (!Deno.env.has("DISCORD_TOKEN")) {
+  alert("You must provide a DISCORD_TOKEN environment variable in a .env file");
   Deno.exit(1);
 }
+const originalFetch = globalThis.fetch;
+globalThis.fetch = (url, options) => {
+  if (
+    options?.headers && "Authorization" in options.headers &&
+    options.headers.Authorization.startsWith("Bot ")
+  ) {
+    options.headers.Authorization = options.headers.Authorization.slice(4);
+  }
+  return originalFetch(url, options);
+};
 
 function can(
   guildMember: APIGuildMember,
@@ -38,14 +54,9 @@ function can(
 
 async function fetchChannels(
   guildId: string,
-): Promise<APIGuildTextChannel<ChannelType.GuildText>[]> {
+) {
   try {
-    const res = await callDiscord(`guilds/${guildId}/channels`, {
-      method: "GET",
-    });
-    const channels = (await res.json()) as APIGuildTextChannel<
-      ChannelType.GuildText
-    >[];
+    const channels = await listChannels(guildId) as APIGuildTextChannel<0>[];
     return channels
       .filter(
         (channel) =>
@@ -53,48 +64,30 @@ async function fetchChannels(
           can(guildMember, channel.permission_overwrites ?? [], 1 << 10),
       )
       .sort((a, b) => a.position - b.position);
-  } catch (error) {
-    console.error(error);
+  } catch {
     return [];
   }
 }
 
 async function fetchMessages(channelId: string): Promise<APIMessage[]> {
   try {
-    const res = await callDiscord(`channels/${channelId}/messages`, {
-      method: "GET",
-    });
-    return await res.json();
-  } catch (error) {
-    console.error(error);
+    return await listMessages(channelId);
+  } catch {
     return [];
   }
 }
 
 async function sendMessage(channelId: string, content: string) {
-  try {
-    await callDiscord(`channels/${channelId}/messages`, {
-      method: "POST",
-      body: { content },
-    });
-  } catch (error) {
-    console.error(error);
-  }
+  await createMessage(channelId, content);
 }
 
-const guilds = (await (
-  await callDiscord("users/@me/guilds", { method: "GET" })
-).json()) as GuildListItem[];
+const guilds = await listGuilds();
 const guildI = select(
   guilds.map((guild) => guild.name),
   "Select a guild",
 );
 
-const guildMember = (await (
-  await callDiscord(`users/@me/guilds/${guilds[guildI].id}/member`, {
-    method: "GET",
-  })
-).json()) as APIGuildMember;
+const guildMember = await getMember(guilds[guildI].id);
 
 const channels = await fetchChannels(guilds[guildI].id);
 const channelI = select(
@@ -111,25 +104,49 @@ while (true) {
 
   const messages = await fetchMessages(channels[channelI].id);
   tty.goHomeSync();
-
-  messages
+  const loggables = await Promise.all(
+    messages.map(async (message) => {
+      const { author, reactions } = message;
+      if (!userCache.has(author.id)) userCache.set(author.id, author);
+      return {
+        author,
+        reactions,
+        timestamp: new Date(message.timestamp),
+        content: await marky(message.content),
+      };
+    }),
+  );
+  loggables
     .sort(
-      (a, b) =>
-        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
-    )
-    .forEach((message) =>
+      (a, b) => a.timestamp.getTime() - b.timestamp.getTime(),
+    ).forEach((message) => {
+      const { author, content, timestamp, reactions } = message;
       console.log(
-        `\n${message.author.global_name ?? message.author.username} ${
+        `\n${
+          rgb24(author.global_name ?? author.username, getColour(author.id))
+        } ${
           gray(
-            `(${message.author.username}) ${
+            `(${author.username}) ${
               new Date(
-                message.timestamp,
+                timestamp,
               ).toDateString()
             }`,
           )
-        }\n${marky(message.content)}`,
-      )
-    );
+        }\n${content}${
+          reactions
+            ? `\n${
+              reactions.map((r) =>
+                (r.me ? bgBlue : bgBrightBlack)(
+                  r.emoji.name?.slice(0, 5) ?? "?",
+                )
+              ).slice(0, 5).join(
+                " ",
+              )
+            }`
+            : ""
+        }`,
+      );
+    });
 
   if (
     can(guildMember, channels[channelI].permission_overwrites ?? [], 1 << 11)

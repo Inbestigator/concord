@@ -1,9 +1,14 @@
-import { blue, bold } from "@std/fmt/colors";
+import { bold } from "@std/fmt/colors";
 
 export default function select(options: string[], title: string): number {
   const buffer = new ArrayBuffer(1024);
   Deno.stdin.setRaw(true);
   const buf = new Uint8Array(buffer);
+
+  const longest = options.reduce(
+    (a, b) => (a.length > b.length ? a : b),
+    "",
+  );
 
   let position = 0;
 
@@ -11,11 +16,12 @@ export default function select(options: string[], title: string): number {
     console.clear();
     console.log(bold(title));
     for (let i = 0; i < options.length; i++) {
-      if (i === position) {
-        console.log(`> ${blue(options[i])}`);
-      } else {
-        console.log(`  ${options[i]}`);
-      }
+      console.log(`${i === position ? ">" : " "} ${
+        options[i].padEnd(
+          longest.length + 1,
+          " ",
+        )
+      }`);
     }
     const nread = Deno.stdin.readSync(buf);
     const sub = buf.subarray(0, nread!);

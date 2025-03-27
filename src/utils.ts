@@ -1,10 +1,11 @@
-import { blue, bold, italic, underline } from "@std/fmt/colors";
+import { blue, bold, brightBlue, italic, underline } from "@std/fmt/colors";
+import { getUser } from "./cache.ts";
 
 export async function callDiscord(
   endpoint: string,
-  options: Record<string, unknown>,
+  options: Record<string, unknown> = {},
 ) {
-  const url = "https://discord.com/api/v10/" + endpoint;
+  const url = new URL(endpoint, "https://discord.com/api/v10/");
   if (options.body) options.body = JSON.stringify(options.body);
   const res = await fetch(url, {
     headers: {
@@ -13,17 +14,27 @@ export async function callDiscord(
     },
     ...options,
   });
+  const data = await res.json();
   if (!res.ok) {
-    const data = await res.json();
     console.error(`Failed to ${options.method} ${endpoint}\n└ ${data.message}`);
   }
-  return res;
+  return data;
 }
 
-export function marky(message: string) {
-  message = message.replaceAll(/@everyone|@here|<@.+>/g, (match) => {
-    return blue(match);
-  });
+export async function marky(message: string) {
+  const regex = /@everyone|@here|<@(\d+?)>/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(message)) !== null) {
+    let user;
+    if (match[1]) user = await getUser(match[1]);
+    message = message.replaceAll(
+      match[0],
+      brightBlue(
+        user?.username ? `@${user.global_name ?? user.username}` : match[0],
+      ),
+    );
+  }
 
   message = message.replaceAll(
     /\*\*(.+)\*\*|#+\s(.+)/g,
